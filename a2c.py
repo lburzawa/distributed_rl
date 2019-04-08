@@ -21,6 +21,7 @@ from tqdm import trange
 from model import DoomNet
 from worker import Worker
 from multiprocessing.pool import ThreadPool
+import torch.distributed as dist
 
 parser = ArgumentParser()
 _ = parser.add_argument
@@ -29,6 +30,8 @@ _('--save_dir', type = str, default = './save', help = 'Save directory')
 args = parser.parse_args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['MASTER_ADDR'] = '128.46.90.148'
+os.environ['MASTER_PORT'] = '29500'
 torch.backends.cudnn.benchmark=True
 #torch.backends.cudnn.deteministic=True
 random.seed(0)
@@ -115,6 +118,12 @@ def shutdown_games(workers):
         workers[i].shutdown()
     return workers
 
+def average_gradients(model):
+    size = dist.get_world_size()
+    for param in model.parameters():
+        dist.all_reduce(param.grad, op = dist.ReduceOp.SUM)
+        param.grad /= size
+
 if __name__ == '__main__':
 
     if os.path.isdir(model_dir):
@@ -148,6 +157,7 @@ if __name__ == '__main__':
     whole_batch = torch.arange(num_workers)
     ones = torch.ones(num_workers).cuda()
     pool = ThreadPool()
+    dist.init_process_group('nccl', rank = 0, world_size = 2)
 
     print("Starting the training!")
     start_time = time()
@@ -214,6 +224,7 @@ if __name__ == '__main__':
 
             optimizer.zero_grad()
             loss.backward()
+            average_gradients(model)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad)
             optimizer.step()
             for i in range(len(hidden)):
