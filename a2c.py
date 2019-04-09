@@ -27,9 +27,10 @@ parser = ArgumentParser()
 _ = parser.add_argument
 _('--scenario', type = str, default = './scenarios/my_way_home.cfg', help = 'set path to the scenario')
 _('--save_dir', type = str, default = './save', help = 'Save directory')
+_('--distributed', action = 'store_true', help = 'use distributed training')
 args = parser.parse_args()
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 os.environ['MASTER_ADDR'] = '128.46.90.148'
 os.environ['MASTER_PORT'] = '29500'
 torch.backends.cudnn.benchmark=True
@@ -157,7 +158,8 @@ if __name__ == '__main__':
     whole_batch = torch.arange(num_workers)
     ones = torch.ones(num_workers).cuda()
     pool = ThreadPool()
-    dist.init_process_group('nccl', rank = 0, world_size = 2)
+    if args.distributed:
+        dist.init_process_group('nccl', rank = 0, world_size = 2)
 
     print("Starting the training!")
     start_time = time()
@@ -224,7 +226,8 @@ if __name__ == '__main__':
 
             optimizer.zero_grad()
             loss.backward()
-            average_gradients(model)
+            if args.distributed:
+                average_gradients(model)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad)
             optimizer.step()
             for i in range(len(hidden)):
