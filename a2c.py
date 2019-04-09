@@ -28,6 +28,8 @@ _ = parser.add_argument
 _('--scenario', type = str, default = './scenarios/my_way_home.cfg', help = 'set path to the scenario')
 _('--save_dir', type = str, default = './save', help = 'Save directory')
 _('--distributed', action = 'store_true', help = 'use distributed training')
+_('--rank', type = int, default = 0, help = 'rank of the machine')
+_('--world_size', type = int, default = 2, help = 'total number of machines')
 args = parser.parse_args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -159,7 +161,7 @@ if __name__ == '__main__':
     ones = torch.ones(num_workers).cuda()
     pool = ThreadPool()
     if args.distributed:
-        dist.init_process_group('nccl', rank = 0, world_size = 2)
+        dist.init_process_group('nccl', rank = args.rank, world_size = args.world_size)
 
     print("Starting the training!")
     start_time = time()
