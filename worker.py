@@ -16,13 +16,13 @@ from PIL import Image
 import cv2
 
 class Worker:
-    def __init__(self, config_file_path, resolution, frame_repeat):
+    def __init__(self, config_file_path, resolution, frame_repeat, actions):
         self.config_file_path = config_file_path
         self.resolution = tuple(resolution)
         self.frame_repeat = frame_repeat
         self.engine = self.initialize_vizdoom()
         self.frame = self.preprocess(self.engine.get_state())
-        self.actions = [[0, 0, 0], [1, 0, 0], [0, 0, 1], [0, 1, 0]]
+        self.actions = actions
         self.reward = 0.0
         self.finished = 0
         self.scores = []

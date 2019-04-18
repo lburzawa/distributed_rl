@@ -26,7 +26,8 @@ import torch.distributed as dist
 parser = ArgumentParser()
 _ = parser.add_argument
 _('--scenario', type = str, default = './scenarios/my_way_home.cfg', help = 'set path to the scenario')
-_('--save_dir', type = str, default = './save', help = 'Save directory')
+_('--save_dir', type = str, default = './save', help = 'save directory')
+_('--num_threads', type = int, default = 8, help = 'number of threads to run the environments')
 _('--distributed', action = 'store_true', help = 'use distributed training')
 _('--rank', type = int, default = 0, help = 'rank of the machine')
 _('--world_size', type = int, default = 2, help = 'total number of machines')
@@ -44,7 +45,7 @@ learning_rate = 0.0001
 discount_factor = 0.99
 epochs = 100
 training_steps_per_epoch = 10000
-seq_len = 20
+seq_len = 40
 sequences_per_epoch = training_steps_per_epoch // seq_len
 frame_repeat = 4
 resolution = [42, 42]
@@ -93,20 +94,15 @@ def prep_rewards_batch(workers):
     output = output.cuda()
     return output
 
-def prep_finished(workers, hidden):
+def prep_finished(workers):
     output = torch.FloatTensor(len(workers))
-    mask = torch.ones(len(workers), 256)
     for i in range(len(workers)):
         if workers[i].finished:
             output[i] = 0
-            mask[i] = torch.zeros(256)
         else:
             output[i] = 1
     output = output.cuda()
-    mask = mask.cuda()
-    hidden[0] = hidden[0] * mask
-    hidden[1] = hidden[1] * mask
-    return output, hidden
+    return output
             
 def get_scores(workers):
     scores = []
@@ -134,15 +130,14 @@ if __name__ == '__main__':
     os.makedirs(model_dir)
     of = open(os.path.join(model_dir, 'test.txt'), 'w')
 
+    n = 3
+    actions = [list(a) for a in it.product([0, 1], repeat=n)]
+
     workers = []
     workers_test = []
     for i in range(num_workers):
-        workers.append(Worker(config_file_path, resolution, frame_repeat))
-        workers_test.append(Worker(config_file_path, resolution, frame_repeat))  
-
-    #n = game.get_available_buttons_size()
-    #actions = [list(a) for a in it.product([0, 1], repeat=n)]
-    actions = [[0, 0, 0], [1, 0, 0], [0, 0, 1], [0, 1, 0]]
+        workers.append(Worker(config_file_path, resolution, frame_repeat, actions))
+        workers_test.append(Worker(config_file_path, resolution, frame_repeat, actions))  
 
     if load_model:
         print("Loading model from: ", model_loadfile)
@@ -159,7 +154,7 @@ if __name__ == '__main__':
 
     whole_batch = torch.arange(num_workers)
     ones = torch.ones(num_workers).cuda()
-    pool = ThreadPool()
+    pool = ThreadPool(args.num_threads)
     if args.distributed:
         dist.init_process_group('nccl', rank = args.rank, world_size = args.world_size)
 
@@ -168,7 +163,6 @@ if __name__ == '__main__':
     forward_time = 0.0
     backward_time = 0.0
     test_time = 0.0
-    hidden = model.init_hidden(num_workers)
 
     for epoch in range(epochs):
         print("\nEpoch %d\n-------" % (epoch))
@@ -189,7 +183,7 @@ if __name__ == '__main__':
             forward_start_time = time()
             for t in range(seq_len):
                 inp = prep_frames_batch(workers)
-                (policy, value, hidden) = model(inp, hidden)
+                (policy, value) = model(inp)
                 probs = F.softmax(policy, 1)
                 log_probs = F.log_softmax(policy, 1)
                 a = probs.multinomial(num_samples=1).detach().squeeze(1)
@@ -201,11 +195,11 @@ if __name__ == '__main__':
                 pool.map(step, workers)
                 reward = prep_rewards_batch(workers) * reward_scaling                                                                               
                 reward_list.append(reward)           
-                unfinished, hidden = prep_finished(workers, hidden)
+                unfinished = prep_finished(workers)
                 unfinished_list.append(unfinished)
 
             inp = prep_frames_batch(workers)
-            (_, value, _) = model(inp, hidden)
+            (_, value) = model(inp)
             value_list.append(value.squeeze(1))
             forward_time += (time() - forward_start_time)
 
@@ -232,8 +226,6 @@ if __name__ == '__main__':
                 average_gradients(model)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad)
             optimizer.step()
-            for i in range(len(hidden)):
-                hidden[i] = hidden[i].detach()
             backward_time += (time() - backward_start_time)
     
         workers, train_scores = get_scores(workers)
@@ -247,15 +239,14 @@ if __name__ == '__main__':
             worker.reset()
         with torch.no_grad():
             model.eval()
-            hidden_test = model.init_hidden(num_workers)
             for learning_step in trange(50, leave=False):
                 for t in range(seq_len):
                     inp = prep_frames_batch(workers_test)
-                    (policy, value, hidden_test) = model(inp, hidden_test)
+                    (policy, value) = model(inp)
                     _, a = torch.max(policy, 1)
                     workers_test = set_action(workers_test, a)
                     pool.map(step, workers_test)           
-                    unfinished, hidden_test = prep_finished(workers_test, hidden_test)
+                    unfinished = prep_finished(workers_test)
         test_time += (time() - test_start_time)
         workers_test, test_scores = get_scores(workers_test)
         print("Results: mean: {:.2f}, std: {:.2f}, min: {:.2f}, max: {:.2f}, count: {:d}".format(test_scores.mean(), test_scores.std(), test_scores.min(), test_scores.max(), test_scores.shape[0]))
