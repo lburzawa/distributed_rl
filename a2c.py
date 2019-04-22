@@ -31,7 +31,7 @@ _('--num_threads', type = int, default = 8, help = 'number of threads to run the
 _('--distributed', action = 'store_true', help = 'use distributed training')
 _('--rank', type = int, default = 0, help = 'rank of the machine')
 _('--world_size', type = int, default = 2, help = 'total number of machines')
-_('--port', type = str, default = 29500, help = 'port for sharing data between machines')
+_('--port', type = str, default = '29500', help = 'port for sharing data between machines')
 args = parser.parse_args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
